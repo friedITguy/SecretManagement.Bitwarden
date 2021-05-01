@@ -26,6 +26,7 @@ if ($Package) {
     @(
         'SecretManagement.BitWarden.Extension'
         'SecretManagement.BitWarden.psd1'
+        'SecretManagement.BitWarden.psm1'
         'LICENSE.txt'
         'README.md'
     ) | ForEach-Object {

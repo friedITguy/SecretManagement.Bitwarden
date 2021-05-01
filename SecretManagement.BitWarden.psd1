@@ -3,7 +3,7 @@
     #RootModule        = 'SecretManagement.BitWarden.psm1'
 
     # Version number of this module.
-    ModuleVersion     = '0.1.0'
+    ModuleVersion     = '0.1.1'
     
     # ID used to uniquely identify this module
     GUID              = 'ace6b81f-24b2-4f6e-a9ce-ba0563e31c32'
@@ -37,7 +37,12 @@
     
     # Format files (.ps1xml) to be loaded when importing this module
     # FormatsToProcess = @()
-
+    RootModule        = 'SecretManagement.BitWarden.psm1'
+    PowerShellVersion = '5.1'
+    CompatiblePSEditions = @('Desktop','Core')
+    FunctionsToExport = @('Invoke-bwcmd','get-BWmetadata')
+    CmdletsToExport = @()
+    RequiredModules = @('Microsoft.PowerShell.SecretManagement')
     NestedModules     = './SecretManagement.BitWarden.Extension'
     VariablesToExport = '*'
     PrivateData       = @{
