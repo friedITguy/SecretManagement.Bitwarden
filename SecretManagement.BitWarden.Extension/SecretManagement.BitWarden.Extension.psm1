@@ -1,154 +1,250 @@
 using namespace Microsoft.PowerShell.SecretManagement
 
+# Module-scoped variables
+$script:BitwardenSecretsClient = $null
+$script:BitwardenSdkLoaded = $false
+
 function Get-Secret {
     [CmdletBinding()]
     param (
-        [Parameter(ValueFromPipelineByPropertyName)]
         [string] $Name,
-        [Parameter(ValueFromPipelineByPropertyName)]
         [string] $VaultName,
-        [Parameter(ValueFromPipelineByPropertyName)]
         [hashtable] $AdditionalParameters
     )
 
-    $res = Invoke-bwcmd "get item $Name"
+    try {
+        # Get vault registration info
+        $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
+        if (-not $vaultInfo) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' is not registered in PowerShell SecretManagement.")
+        }
 
+        # Verify that the BitwardenSecretsClient session is open
+        if (-not $script:BitwardenSecretsClient) {
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
 
-    Switch ($AdditionalParameters.outputType ) {
-        'Detailed' {
-            Write-Verbose "Getting Detailed Secret"
-            $Output = $res
-            $Output.PSObject.TypeNames.Insert(0, "BW_SECRET_Detailed")
+        # Get a list of all secrets in the vault
+        $Private:allSecrets = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
+
+        # Make sure there are secrets in the returned object
+        if (-not $Private:allSecrets.Data) {
+            throw [System.ArgumentException]::new("Unable to find a secret with an 'Id' matching the provided 'Name' parameter.")
         }
-        'Totp' {
-            $Output = Invoke-bwcmd "get totp $Name"
-            $Output.PSObject.TypeNames.Insert(0, "BW_SECRET_TOTP")
+
+        # Find matching secrets by either Key or Id
+        $Private:secretMatch = $Private:allSecrets.Data | ?{($_.Id.Guid -eq $Name) -or ($_.Key -eq $Name)}
+
+        # Check if there was a matching secret found
+        if (-not $Private:secretMatch) {
+            throw [System.ArgumentException]::new("Unable to find a secret with an 'Id' matching the provided 'Name' parameter.")
         }
-        Default {
-            Write-Verbose "Getting Simple Secret"
-            $username = $res.login.Username
-            $password = $res.login.Password
-            if ($username -or $password) {
-                Write-Verbose "Getting Login Account"
-                if ($null -eq $username) { $username = '' }
-                if ($null -eq $password) { $password = '' }
-                if ("" -ne $password) { $password = $password | ConvertTo-SecureString -AsPlainText -Force }
-                $Output = [System.Management.Automation.PSCredential]::new($username, $password)
-            }
-            # Secure Note
-            if ($null -ne $res.Notes) {
-                Write-Verbose "Getting SecureNote"
-                return $res.Notes
-            }
+        
+        # Get the secret from the vault
+        $Private:secret = $script:BitwardenSecretsClient.Secrets.Get($Private:secretMatch[0].Id.Guid)
+
+        if (-not $Private:secret) {
+            throw [System.ArgumentException]::new("Unable to find a secret with an 'Id' matching the provided 'Name' parameter.")
         }
+
+        if (-not $Private:secret.Value) {
+            throw [System.NullReferenceException]::new("A matching secert was found but the secret does not contain a value to return.")
+        }
+
+        # Return as SecureString by default for security
+        return $Private:secret.Value | ConvertTo-SecureString -AsPlainText -Force
+        
+    } catch [System.UnauthorizedAccessException] {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerUnauthorized',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } catch {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerError',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            $Name
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        # Clean up sensitive data
+        $Private:allSecrets = $null
+        $Private:secretMatch = $null
+        $Private:secret = $null
+        [System.GC]::Collect()
     }
-
-    return $Output
 }
-
-
-Function Get-SecretTemplate {
-    <#
-.SYNOPSIS
-Create a BitWarden Secret Template Object
-.DESCRIPTION
-Create a BitWarden Secret Template Object
-.PARAMETER Vault
-Name of the vault to connect to.
-.PARAMETER User
-Username to connect with.
-.PARAMETER Trust
-Cause subsquent logins to not require multifactor authentication.
-.PARAMETER StayConnected
-Save the LastPass decryption key on the hard drive so re-entering password once the connection window close is not required anymore. 
-This operation will prompt the user.
-.PARAMETER Force
-Force switch.
-.EXAMPLE
-PS> Get-SecretTemplate -url 'https://github.com/' -Note "Version control using Git" -Type 'Login' | Set-Secret
-Create login templated secret and create secret in BitWarden.  This will automatically prompt to set credentials
-PS> Get-SecretTemplate -url 'https://github.com/' -Note "Version control using Git" -Type 'SecureNote' | Set-Secret
-Create SecureNote templated secret and create secret in BitWarden.
-#>
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        [string]$Name, 
-        [parameter(Mandatory = $true)]
-        [ValidateSet("SecureNote", "Login")]
-        [string]$Type,
-        [string]$Note, 
-        [string]$url
-)
-
-    Switch ($type) {
-        'Login' {
-            $credential = Get-Credential
-            $username = $Credential.UserName
-            $password = $Credential.GetNetworkCredential().Password
-            $object = @"
-        {"organizationId":null,"folderId":null,"type":1,"name":"$Name","notes":"$Note","favorite":false,"fields":[],"login":{"uris":[{"match":null,"uri":"$url"}],"username":"$username","password":"$password","totp":"JBSWY3DPEHPK3PXP"},"secureNote":null,"card":null,"identity":null}
-"@ 
-        }
-        'SecureNote' {
-            $object = @"
-    {"organizationId":null,"folderId":null,"type":2,"name":"$Name","notes":"$Note","favorite":false,"secureNote":{"type":0}}
-"@
-        }
-    }
-
-    $object = $object | ConvertFrom-Json
-    $object.PSObject.TypeNames.Insert(0, "BW_SECRET_Template")
-    $object
-}
-
 
 function Set-Secret {
     [CmdletBinding()]
     param (
-        [Parameter(ValueFromPipelineByPropertyName)]
         [string] $Name,
-        [Parameter(ValueFromPipelineByPropertyName, ValueFromPipeline)]
-        [ValidateScript( { $_.PSObject.TypeNames[0] -eq 'BW_SECRET_Template' -or $_.PSObject.TypeNames[0] -eq 'BW_SECRET_Detailed' -or [PSCredential] })]
-        $Secret,
-        [Parameter(ValueFromPipelineByPropertyName)]
+        [object] $Secret,
         [string] $VaultName,
-        [Parameter(ValueFromPipelineByPropertyName)]
         [hashtable] $AdditionalParameters
     )
-    
-    if ($Secret -is [pscredential]) {
-        $object = Get-Secret -Name $Name -AdditionalParameters @{OutputType = 'Detailed' }
-        $object.login.username = $Secret.Username
-        $object.login.password = $Secret.GetNetworkCredential().password
-        $res = invoke-bwcmd "edit item $($object.ID) $([System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($Object | Convertto-Json -depth 10 -compress))))"
+
+    try {
+        # Get vault registration info
+        $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
+        if (-not $vaultInfo) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' is not registered in PowerShell SecretManagement.")
+        }
+
+        # Verify that the BitwardenSecretsClient session is open
+        if (-not $script:BitwardenSecretsClient) {
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
+        
+        # Convert secret to string value
+        $private:secretValue = switch ($Secret.GetType().Name) {
+            'SecureString' {
+                [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret))
+            }
+            'PSCredential' {
+                # For credentials, store as JSON
+                @{
+                    username = $Secret.UserName
+                    password = $Secret.GetNetworkCredential().Password
+                } | ConvertTo-Json -Compress
+            }
+            'String' {
+                $Secret
+            }
+            default {
+                $Secret.ToString()
+            }
+        }
+
+        # Get all secrets, so we can find the one with a matching name
+        $Private:allSecrets = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
+        if (-not $Private:allSecrets.Data) {
+            Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
+        }
+
+        # Find secret with a matching Name or ID
+        $Private:existingSecretMatch = $Private:allSecrets.Data | Where-Object {($_.Id -eq $Name) -or ($_.Key -eq $Name)}
+        
+
+        if ($Private:existingSecretMatch) {
+            # Get the full details of the exisitng secret
+            $Private:existingSecret = $script:BitwardenSecretsClient.Secrets.Get($Private:existingSecretMatch[0].Id.Guid)
+
+            # Update existing secret
+            $null = $Script:BitwardenSecretsClient.Secrets.Update(
+                $vaultInfo.VaultParameters.OrganizationId,
+                $Private:existingSecret[0].Id.Guid,
+                $Name,
+                $Private:secretValue,
+                $Private:existingSecret.Note ?? "",
+                @($vaultInfo.VaultParameters.ProjectId)
+            )
+        } else {
+            # Create new secret
+            $null = $Script:BitwardenSecretsClient.Secrets.Create(
+                $vaultInfo.VaultParameters.OrganizationId,
+                $Name,
+                $Private:secretValue,
+                "",
+                @($vaultInfo.VaultParameters.ProjectId)
+            )
+        }
+
+        return $?
+        
+    } catch [System.UnauthorizedAccessException] {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerUnauthorized',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } catch {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerError',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            $Name
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        # Clean up sensitive data
+        $Private:secretValue = $null
+        $Private:existingSecretMatch = $null
+        $Private:existingSecret = $null
+        $Private:secretData = $null
+        $Private:allSecrets = $null
+        [System.GC]::Collect()
     }
-    IF ($Secret.PSObject.TypeNames -eq 'BW_SECRET_Detailed') {
-        Write-Verbose "Editing Item $($Secret.Name)"
-        $res = invoke-bwcmd "edit item $($secret.ID) $([System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($secret | Convertto-Json -depth 10 -compress))))"
-    }
-    IF ($Secret.PSObject.TypeNames -eq 'BW_SECRET_Template') {
-        Write-Verbose "Creating new object $($Secret.Name)"
-        $res = invoke-bwcmd "create item $([System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($secret | Convertto-Json -depth 10 -compress))))" 
-    }
-    
-    $res 
 }
 
 function Remove-Secret {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param (
-        [Parameter(ValueFromPipelineByPropertyName)]
         [string] $Name,
-        [Parameter(ValueFromPipelineByPropertyName)]
         [string] $VaultName,
-        [Parameter(ValueFromPipelineByPropertyName)]
         [hashtable] $AdditionalParameters
     )
+    
+    try {
+        
+        # Get vault registration info
+        $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
+        if (-not $vaultInfo) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' is not registered")
+        }
 
+        # Verify that the BitwardenSecretsClient session is open
+        if (-not $script:BitwardenSecretsClient) {
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
 
+         # Define GUID verification regex
+        [regex]$guidRegex = '(?im)^[{(]?[0-9A-F]{8}[-]?(?:[0-9A-F]{4}[-]?){3}[0-9A-F]{12}[)}]?$'
 
-    Invoke-bwcmd "delete item $Name"
+        # To ensure we're going to delete the correct secret, we only search by the secret's Id, not it's Key
+        # Check Name parameter against RegEx to ensure it's a valid GUID
+        if ($Name -notmatch $guidRegex){
+            throw [System.ArgumentException]::new("The provided 'Name' is not a GUID. You must provide the ID of the secret you wish to delete in the 'Name' parameter.")
+        }
+        
+        # Find secret with a matching Id
+        $Private:existingSecret = $script:BitwardenSecretsClient.Secrets.Get($Name)
+        
+        # Make sure a match was found
+        if (-not $Private:existingSecret) {
+            throw [System.ArgumentException]::new("Unable to find a secret with an 'Id' matching the provided 'Name' parameter.")
+        }
+        
+        # Get the full details of the exisitng secret
+        $null = $script:BitwardenSecretsClient.Secrets.Delete(@($Private:existingSecret.Id.Guid))
+        return $?
+    } catch [System.UnauthorizedAccessException] {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerUnauthorized',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } catch {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerError',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            $Name
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        # Clean up sensitive data
+        $Private:existingSecret
+        [System.GC]::Collect()
+    }
 }
 
 function Get-SecretInfo {
@@ -158,43 +254,245 @@ function Get-SecretInfo {
         [string] $VaultName,
         [hashtable] $AdditionalParameters
     )
-    if ([string]::IsNullOrEmpty($Filter))
-    {
-        $Filter = "*"
-    }
-    $pattern = [WildcardPattern]::new($Filter)
-    $vaultSecretInfos = invoke-bwcmd "list items"
-
-    foreach ($vaultSecretInfo in $vaultSecretInfos) {
+    
+    try {
         
-        if ($pattern.IsMatch($vaultSecretInfo.Name))
-        {
-            $metadata=get-BWmetadata -vaultSecretInfo $vaultSecretInfo
-            IF ($vaultSecretInfo.type -eq 1) {
-                $type = [Microsoft.PowerShell.SecretManagement.SecretType]::PSCredential
-            }ELSE{
-                $type = [Microsoft.PowerShell.SecretManagement.SecretType]::SecureString
-            }
-            Write-Output (
-                [Microsoft.PowerShell.SecretManagement.SecretInformation]::new(
-                    $vaultSecretInfo.Name,
-                    $type,
-                    $VaultName,
-                    $metadata)
-            ) | Select-Object *, @{Name = 'GUID_Name'; Expression = { $vaultSecretInfo.ID } }
+        # Get vault registration info
+        $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
+        if (-not $vaultInfo) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' is not registered")
         }
+
+        # Verify that the BitwardenSecretsClient session is open
+        if (-not $script:BitwardenSecretsClient) {
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
+        
+        if ([string]::IsNullOrEmpty($Filter)) {
+            $Filter = "*"
+        }
+        
+        $private:pattern = [WildcardPattern]::new($Filter)
+
+        $private:allSecrets = $Script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
+        
+        if (-not $Private:allSecrets.Data) {
+            Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
+        }
+        
+        $Private:return = @()
+        foreach ($Private:secretMatch in $private:allSecrets.Data) {
+            if (($private:pattern.IsMatch($Private:secretMatch.Key)) -or ($private:pattern.IsMatch($Private:secretMatch.Id.Guid))) {
+                $Private:secret = $script:BitwardenSecretsClient.Secrets.Get($Private:secretMatch.Id.Guid)
+                $Private:metadata = @{
+                    'Id' = $Private:secret.Id.Guid
+                    'Key' = $Private:secret.Key
+                    'CreatedDate' = $Private:secret.CreationDate
+                    'RevisionDate' = $Private:secret.RevisionDate
+                    'Note' = $Private:secret.Note
+                }
+                
+                Write-Output (
+                    [Microsoft.PowerShell.SecretManagement.SecretInformation]::new(
+                        $Private:secret.Id.Guid, # Name of Secret
+                        [Microsoft.PowerShell.SecretManagement.SecretType]::SecureString, # Indicates that Get-Secret will return a SecureString
+                        $VaultName, # Name of vault
+                        $Private:metadata # Optional metadata
+                    )
+                )
+            }
+        }
+        
+    } catch [System.UnauthorizedAccessException] {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerUnauthorized',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } catch {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerError',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            $Name
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        # Clean up sensitive data
+        $Private:pattern = $null
+        $Private:secretMatch = $null
+        $Private:secret = $null
+        $Private:allSecrets = $null
+        $Private:metadata = $null
+        [System.GC]::Collect()
     }
 }
 
 function Test-SecretVault {
     [CmdletBinding()]
     param (
-        [Parameter(ValueFromPipelineByPropertyName)]
         [string] $VaultName,
-        [Parameter(ValueFromPipelineByPropertyName)]
         [hashtable] $AdditionalParameters
     )
-    invoke-bwcmd "sync" | Out-Null 
-    $status = invoke-bwcmd "status" 
-    return $status
+    
+    try {
+        # Get vault registration info
+        $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
+        if (-not $vaultInfo) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' is not registered")
+        }
+
+        # Validate required parameters
+        if (-not $vaultInfo.VaultParameters.OrganizationId) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required OrganizationId parameter")
+        }
+        if (-not $vaultInfo.VaultParameters.ProjectId) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter")
+        }
+        if (-not $vaultInfo.VaultParameters.ApiUrl) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter")
+        }
+        if (-not $vaultInfo.VaultParameters.IdentityUrl) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter")
+        }
+
+        # Simple connectivity test
+        $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId) | Out-Null
+        return $true
+    } catch [System.UnauthorizedAccessException] {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerUnauthorized',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } catch {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'SecretsManagerError',
+            [System.Management.Automation.ErrorCategory]::ReadError,
+            $Name
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    }
+}
+
+function Unlock-SecretVault {
+    <#
+    .SYNOPSIS
+    Unlocks a Bitwarden Secrets Manager vault for the current session
+    
+    .DESCRIPTION
+    Authenticates to Bitwarden Secrets Manager using an access token and 
+    keeps the vault unlocked for the current PowerShell session.
+    
+    .PARAMETER Name
+    The name of the registered vault to unlock
+    
+    .PARAMETER Password
+    The access token as a SecureString for authenticating to Bitwarden Secrets Manager
+    
+    .EXAMPLE
+    $accessToken = Read-Host -AsSecureString -Prompt "Access Token"
+    Unlock-SecretVault -Name "Bitwarden" -Password $accessToken
+    #>
+    [CmdletBinding()]
+    param (
+        [string] $VaultName,
+        [System.Security.SecureString] $Password,
+        [hashtable] $AdditionalParameters
+    )
+    
+    try {
+        if(-not $Password){throw "No password provided."}
+
+        Write-Verbose "Unlocking Bitwarden Secrets Manager vault: $VaultName"
+        
+        # Get vault registration info
+        $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
+        if (-not $vaultInfo) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' is not registered")
+        }
+        
+        # Validate required parameters
+        if (-not $vaultInfo.VaultParameters.OrganizationId) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required OrganizationId parameter")
+        }
+        if (-not $vaultInfo.VaultParameters.ProjectId) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter")
+        }
+        if (-not $vaultInfo.VaultParameters.ApiUrl) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter")
+        }
+        if (-not $vaultInfo.VaultParameters.IdentityUrl) {
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter")
+        }
+
+        # Ensure the Bitwarden Secrets Manager SDK is loaded
+        if (-not $script:BitwardenSdkLoaded) {
+            Write-Verbose "Loading the Bitwarden SDK for C#"
+            try{
+                Import-BitwardenSdk -ErrorAction Stop
+                $script:BitwardenSdkLoaded = $true
+            }catch{
+                $script:BitwardenSdkLoaded = $false
+                throw throw [System.InvalidOperationException]::new("Unable to load the Bitwarden SDK")
+            }
+        }
+        
+        # Create authenticated session
+        try {
+            # Convert SecureString to plain text securely
+            $Private:plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
+
+            # Define a path to store the Bitwarden SDK state file
+            $stateFilePath = Join-Path $PSScriptRoot "bitwarden-state.json"
+
+            # Initialize SDK client
+            $bitwardenSettings = [Bitwarden.Sdk.BitwardenSettings]::new()
+            $bitwardenSettings.ApiUrl = $vaultInfo.VaultParameters.ApiUrl
+            $bitwardenSettings.IdentityUrl = $vaultInfo.VaultParameters.IdentityUrl
+            $script:BitwardenSecretsClient = [Bitwarden.Sdk.BitwardenClient]::new($bitwardenSettings)
+            $script:BitwardenSecretsClient.Auth.LoginAccessToken($Private:plainToken, $stateFilePath);
+
+            # Test connection
+            try{
+                $null = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
+            } catch {
+                Write-Warning "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
+                return $false
+            }
+
+            # Connection successful
+            Write-Verbose "Successfully connected to Bitwarden Secrets Manager"
+            
+        } catch {
+            throw [System.UnauthorizedAccessException]::new(
+                "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
+            )
+        } finally {
+            # Clean up sensitive data
+            $plainToken = $null 
+            [System.GC]::Collect()
+        }
+    } catch [System.UnauthorizedAccessException] {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'VaultUnlockFailed',
+            [System.Management.Automation.ErrorCategory]::AuthenticationError,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    } catch {
+        $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+            $_.Exception,
+            'VaultUnlockError',
+            [System.Management.Automation.ErrorCategory]::InvalidOperation,
+            $VaultName
+        )
+        $PSCmdlet.WriteError($errorRecord)
+    }
 }

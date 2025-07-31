@@ -1,0 +1,17 @@
+# Ignore Bitwarden state json files
+*.json
+
+# Ignore build artifacts
+build/
+dist/
+
+# Ignore temporary files
+*.tmp
+*.log
+
+# Ignore sensitive files
+.env
+
+# Ignore OS/editor specific files
+.DS_Store
+.vscode/
