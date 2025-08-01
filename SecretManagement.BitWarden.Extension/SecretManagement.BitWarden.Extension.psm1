@@ -3,6 +3,8 @@ using namespace Microsoft.PowerShell.SecretManagement
 # Module-scoped variables
 $script:BitwardenSecretsClient = $null
 $script:BitwardenSdkLoaded = $false
+$script:SessionTimeout = New-TimeSpan -Minutes 30
+$script:LastActivity = Get-Date
 
 function Get-Secret {
     [CmdletBinding()]
@@ -23,6 +25,15 @@ function Get-Secret {
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            $script:BitwardenSecretsClient = $null
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
 
         # Validate OrganizationId
         if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
@@ -104,6 +115,16 @@ function Set-Secret {
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            $script:BitwardenSecretsClient = $null
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
 
         # Validate OrganizationId
         if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
@@ -225,6 +246,16 @@ function Remove-Secret {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
 
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            $script:BitwardenSecretsClient = $null
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
+
         # To ensure we're going to delete the correct secret, we only search by the secret's Id, not it's Key
         # Validate the ID is a GUID
         if (-not [System.Guid]::TryParse($Name, [ref]$null)) {
@@ -285,6 +316,15 @@ function Get-SecretInfo {
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            $script:BitwardenSecretsClient = $null
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
 
         # Validate OrganizationId
         if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
@@ -365,6 +405,20 @@ function Test-SecretVault {
         if (-not $vaultInfo) {
             throw [System.ArgumentException]::new("Vault '$VaultName' is not registered")
         }
+
+        # Verify that the BitwardenSecretsClient session is open
+        if (-not $script:BitwardenSecretsClient) {
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            $script:BitwardenSecretsClient = $null
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
 
         # Validate required parameters
         # Validate OrganizationId
@@ -522,11 +576,13 @@ function Unlock-SecretVault {
             try{
                 $null = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
             } catch {
-                Write-Warning "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
+                throw "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
                 return $false
             }
 
             # Connection successful
+            # Set the LastActivity variable to now
+            $script:LastActivity = Get-Date
             Write-Verbose "Successfully connected to Bitwarden Secrets Manager"
             
         } catch {
