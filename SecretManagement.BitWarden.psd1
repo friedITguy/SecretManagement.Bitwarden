@@ -21,8 +21,8 @@
     Description = 'Microsoft.PowerShell.SecretManagement extension for Bitwarden Secrets Manager.'
     
     # Minimum version of the PowerShell engine required by this module
-    PowerShellVersion  = '5.1'
-    CompatiblePSEditions = @('Desktop','Core')
+    PowerShellVersion  = '7'
+    CompatiblePSEditions = @('Core')
     
     # Modules that must be imported into the global environment prior to importing this module
     RequiredModules    = @('Microsoft.PowerShell.SecretManagement')
