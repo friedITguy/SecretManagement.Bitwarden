@@ -24,6 +24,11 @@ function Get-Secret {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
 
+        # Validate OrganizationId
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+
         # Get a list of all secrets in the vault
         $Private:allSecrets = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
 
@@ -98,6 +103,16 @@ function Set-Secret {
         # Verify that the BitwardenSecretsClient session is open
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
+
+        # Validate OrganizationId
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+
+        # Validate ProjectId
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
         }
         
         # Convert secret to string value
@@ -210,12 +225,9 @@ function Remove-Secret {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
 
-         # Define GUID verification regex
-        [regex]$guidRegex = '(?im)^[{(]?[0-9A-F]{8}[-]?(?:[0-9A-F]{4}[-]?){3}[0-9A-F]{12}[)}]?$'
-
         # To ensure we're going to delete the correct secret, we only search by the secret's Id, not it's Key
-        # Check Name parameter against RegEx to ensure it's a valid GUID
-        if ($Name -notmatch $guidRegex){
+        # Validate the ID is a GUID
+        if (-not [System.Guid]::TryParse($Name, [ref]$null)) {
             throw [System.ArgumentException]::new("The provided 'Name' is not a GUID. You must provide the ID of the secret you wish to delete in the 'Name' parameter.")
         }
         
@@ -272,6 +284,11 @@ function Get-SecretInfo {
         # Verify that the BitwardenSecretsClient session is open
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
+
+        # Validate OrganizationId
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
         }
         
         if ([string]::IsNullOrEmpty($Filter)) {
@@ -350,17 +367,33 @@ function Test-SecretVault {
         }
 
         # Validate required parameters
+        # Validate OrganizationId
         if (-not $vaultInfo.VaultParameters.OrganizationId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required OrganizationId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required 'OrganizationId' parameter.")
         }
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+        # Validate ProjectId
         if (-not $vaultInfo.VaultParameters.ProjectId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter.")
         }
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
+        }
+        # Validate ApiUrl
         if (-not $vaultInfo.VaultParameters.ApiUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter.")
         }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.ApiUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'ApiUrl' parameter.")
+        }
+        # Validate IdentityUrl
         if (-not $vaultInfo.VaultParameters.IdentityUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter.")
+        }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.IdentityUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'IdentityUrl' parameter.")
         }
 
         # Simple connectivity test
@@ -423,17 +456,33 @@ function Unlock-SecretVault {
         }
         
         # Validate required parameters
+        # Validate OrganizationId
         if (-not $vaultInfo.VaultParameters.OrganizationId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required OrganizationId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required 'OrganizationId' parameter.")
         }
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+        # Validate ProjectId
         if (-not $vaultInfo.VaultParameters.ProjectId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter.")
         }
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$null)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
+        }
+        # Validate ApiUrl
         if (-not $vaultInfo.VaultParameters.ApiUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter.")
         }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.ApiUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'ApiUrl' parameter.")
+        }
+        # Validate IdentityUrl
         if (-not $vaultInfo.VaultParameters.IdentityUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter.")
+        }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.IdentityUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'IdentityUrl' parameter.")
         }
 
         # Ensure the Bitwarden Secrets Manager SDK is loaded
