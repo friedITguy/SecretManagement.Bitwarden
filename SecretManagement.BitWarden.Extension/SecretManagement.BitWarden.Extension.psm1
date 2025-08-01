@@ -103,7 +103,13 @@ function Set-Secret {
         # Convert secret to string value
         $private:secretValue = switch ($Secret.GetType().Name) {
             'SecureString' {
-                [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret))
+                $Private:ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+                try {
+                    [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($Private:ptr)
+                } finally {
+                    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Private:ptr)
+                    $private:ptr = [System.IntPtr]::Zero
+                }
             }
             'PSCredential' {
                 # For credentials, store as JSON
@@ -177,7 +183,7 @@ function Set-Secret {
         $Private:secretValue = $null
         $Private:existingSecretMatch = $null
         $Private:existingSecret = $null
-        $Private:secretData = $null
+        $Private:ptr = $null
         $Private:allSecrets = $null
         [System.GC]::Collect()
     }
@@ -445,7 +451,13 @@ function Unlock-SecretVault {
         # Create authenticated session
         try {
             # Convert SecureString to plain text securely
-            $Private:plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
+            $Private:ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
+            try {
+                $Private:plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($Private:ptr)
+            } finally {
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Private:ptr)
+                $private:ptr = [System.IntPtr]::Zero
+            }
 
             # Define a path to store the Bitwarden SDK state file
             $stateFilePath = Join-Path $PSScriptRoot "bitwarden-state.json"
@@ -474,7 +486,8 @@ function Unlock-SecretVault {
             )
         } finally {
             # Clean up sensitive data
-            $plainToken = $null 
+            $Private:plainToken = $null
+            $Private:ptr = $null
             [System.GC]::Collect()
         }
     } catch [System.UnauthorizedAccessException] {
