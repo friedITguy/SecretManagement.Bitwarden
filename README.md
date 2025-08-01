@@ -10,20 +10,13 @@
 ## Prerequisites
 
 ### Download and Install:
-* [PowerShell](https://github.com/PowerShell/PowerShell)
+* [PowerShell 7 (or Above)](https://github.com/PowerShell/PowerShell)
 * [.NET SDK](https://dotnet.microsoft.com/en-us/download)
 
 ### PowerShell SecretManagement Module:
 You can get the `SecretManagement` module from the PowerShell Gallery:
 
-Using PowerShellGet v2:
-
-```pwsh
-Install-Module Microsoft.PowerShell.SecretManagement
-```
-
 Using PowerShellGet v3:
-
 ```pwsh
 Install-PSResource Microsoft.PowerShell.SecretManagement
 ```
