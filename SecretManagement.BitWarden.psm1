@@ -61,3 +61,153 @@ function Import-BitwardenSdk {
     # Load the Bitwarden.Secrets.Sdk to the PowerShell Session
     Add-Type -Path $sdkPath -ErrorAction Stop
 }
+
+function Get-BitwardenStateDirectoryPath {
+    [CmdletBinding()]
+    param ()
+
+    try{
+        $Private:StateDir = if ($IsWindows) {
+            if (-not (Test-Path $env:USERPROFILE)) { throw [System.IO.DirectoryNotFoundException]::new("Unable to find the USERPROFILE directory.") }
+            Join-Path $env:USERPROFILE ".bitwarden" -ErrorAction Stop
+        } else {
+            if (-not (Test-Path $env:HOME)) { throw [System.IO.DirectoryNotFoundException]::new("Unable to find the HOME directory.") }
+            Join-Path $env:HOME ".bitwarden" -ErrorAction Stop
+        }
+
+        if (-not (Test-Path $Private:StateDir -IsValid)) {
+            throw [System.InvalidOperationException]::new("Unable to construct a path for the Bitwarden state file directory.")
+        }
+
+        return $Private:StateDir
+    } finally {
+        $Private:StateDir = $null
+        [System.GC]::Collect()
+    }
+}
+
+function Initialize-BitwardenStateDirectory {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string] $StateDirectoryPath
+    )
+
+    try {
+
+        # Validate the StateDirectoryPath parameter
+        if (-not (Test-Path $StateDirectoryPath -IsValid)){
+            throw [System.InvalidOperationException]::new("The provided 'StateDirectoryPath' string does not contain valid syntax for a Path.")
+        }
+
+        # Create the StateFileDirectory if it doesn't already exist
+        if (-not (Test-Path $StateDirectoryPath)) {
+            New-Item -ItemType Directory -Path $StateDirectoryPath -Force -ErrorAction Stop | Out-Null
+            Write-Verbose "Created a new Bitwarden state file directory for $($env:USERNAME)."
+        }
+
+        # Verify the StateFileDirectory exists
+        if (-not (Test-Path $StateDirectoryPath)) {
+            throw [System.IO.DirectoryNotFoundException]::new("Unable to create the state file directory at the provided 'StateDirectoryPath'")
+        }
+
+        # Set restrictive permissions
+        if ($IsWindows) {
+            # Windows: Use ACLs for secure permissions
+            $Private:acl = Get-Acl $StateDirectoryPath -ErrorAction Stop
+
+            if (-not $Private:acl.AreAccessRulesProtected){
+                $Private:acl.SetAccessRuleProtection($true, $false)
+            }
+
+            # Get current user SID for more reliable identification
+            $Private:currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            
+            # Create inheritance flags separately to avoid parsing issues
+            $Private:inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+            
+            # Configure the new access rule
+            $Private:accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $Private:currentUser.User,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                $Private:inheritanceFlags,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+            ) -ErrorAction Stop
+            
+            # Check to see if the directory already has the correct access rule
+            if (
+                ($Private:acl.Access.Count -eq 1) -and
+                ($Private:acl.Access[0].FileSystemRights -eq $Private:accessRule.FileSystemRights) -and
+                ($Private:acl.Access[0].AccessControlType -eq $Private:accessRule.AccessControlType) -and
+                (($Private:acl.Access[0].IdentityReference.Value -eq $Private:accessRule.IdentityReference.Value) -or ($Private:acl.Access[0].IdentityReference.Value -eq $Private:currentUser.Name)) -and
+                ($Private:acl.Access[0].IsInherited -eq $Private:accessRule.IsInherited) -and
+                ($Private:acl.Access[0].InheritanceFlags -eq $Private:accessRule.InheritanceFlags) -and
+                ($Private:acl.Access[0].PropagationFlags -eq $Private:accessRule.PropagationFlags)
+            ) {
+                return $null
+            }
+
+            # Add the Access Rule to the ACL template
+            $Private:acl.SetAccessRule($Private:accessRule)
+
+            # Write the ACL to the directory
+            try{
+                Set-Acl $StateDirectoryPath $Private:acl -ErrorAction Stop
+            }
+            catch [System.Security.AccessControl.PrivilegeNotHeldException] {
+                throw [System.InvalidOperationException] "The Bitwarden state file directory does not have the expected permissions. The 'Initialize-BitwardenStateDirectory' function attempted to fix the permissions but failed because the directory's access rules are protected. Please delete the '$($StateDirectoryPath)' directory and try again."
+            }
+            catch {
+                throw $_
+            }
+        } else {
+            # Linux/macOS: Use chmod for POSIX permissions (owner read/write/execute only)
+            & chmod 700 $stateDir
+            
+            # Verify permissions were set correctly
+            $permissions = & stat -c "%a" $stateDir 2>/dev/null
+            if ($permissions -ne "700") {
+                throw "Failed to set secure permissions on Bitwarden state directory."
+            }
+        }
+    } finally {
+        $Private:acl = $null
+        $Private:accessRule = $null
+        $Private:currentUser = $null
+        $Private:inheritanceFlags = $null
+        [System.GC]::Collect()
+    }
+
+}
+
+function Remove-BitwardenStateFile {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [String] $StateFilePath
+    )
+
+    try{
+        if(-not (Test-Path $stateFilePath -IsValid)){
+            throw [System.InvalidOperationException]::new("The provided 'StateFilePath' string does not contain valid syntax for a Path.")
+        }
+
+        if (-not (Test-Path $stateFilePath)) {
+            return $false
+        }
+
+        $Private:StateDirectoryPath = Get-BitwardenStateDirectoryPath -ErrorAction Stop
+        $Private:StateFileParent = Split-Path $stateFilePath -Parent
+        
+        if (-not $Private:StateDirectoryPath -eq $Private:StateFileParent){
+            throw [System.InvalidOperationException]::new("The provided 'StateFilePath' is not located within the Bitwarden state file directory.")
+        }
+
+        Remove-Item $stateFilePath -Force -ErrorAction Stop
+    } finally {
+        $Private:StateDirectoryPath = $null
+        $Private:StateFileParent = $null
+        [System.GC]::Collect()
+    }
+}

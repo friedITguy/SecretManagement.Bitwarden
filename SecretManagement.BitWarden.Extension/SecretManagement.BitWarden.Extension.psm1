@@ -3,6 +3,7 @@ using namespace Microsoft.PowerShell.SecretManagement
 # Module-scoped variables
 $script:BitwardenSecretsClient = $null
 $script:BitwardenSdkLoaded = $false
+$script:StateFilePath = $null
 $script:SessionTimeout = New-TimeSpan -Minutes 30
 $script:LastActivity = Get-Date
 
@@ -29,6 +30,8 @@ function Get-Secret {
         # Verify that the session is not expired
         if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
             $script:BitwardenSecretsClient = $null
+            Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+            $script:StateFilePath = $null
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
 
@@ -119,6 +122,8 @@ function Set-Secret {
         # Verify that the session is not expired
         if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
             $script:BitwardenSecretsClient = $null
+            Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+            $script:StateFilePath = $null
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
 
@@ -249,6 +254,8 @@ function Remove-Secret {
         # Verify that the session is not expired
         if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
             $script:BitwardenSecretsClient = $null
+            Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+            $script:StateFilePath = $null
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
 
@@ -320,6 +327,8 @@ function Get-SecretInfo {
         # Verify that the session is not expired
         if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
             $script:BitwardenSecretsClient = $null
+            Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+            $script:StateFilePath = $null
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
 
@@ -414,6 +423,8 @@ function Test-SecretVault {
         # Verify that the session is not expired
         if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
             $script:BitwardenSecretsClient = $null
+            Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+            $script:StateFilePath = $null
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
 
@@ -553,6 +564,17 @@ function Unlock-SecretVault {
         
         # Create authenticated session
         try {
+            # Get the directory path where Bitwarden SDK state files are stored
+            $Private:BitwardenStateDirectory = Get-BitwardenStateDirectoryPath -ErrorAction Stop
+            if (-not $Private:BitwardenStateDirectory) { throw [System.ArgumentException]::new("Unable to obtain a directory path to store the Bitwarden state file in.") }
+            
+            # Initialize the Bitwarden SDK state file directory
+            $null = Initialize-BitwardenStateDirectory -StateDirectoryPath $Private:BitwardenStateDirectory -ErrorAction Stop
+
+            # Define a path to store the Bitwarden SDK state file for this session
+            $Script:StateFilePath = Join-Path $Private:BitwardenStateDirectory "state-$($VaultName).json" -ErrorAction Stop
+            if (-not (Test-Path $Script:StateFilePath -IsValid)) { throw [System.ArgumentException]::new("Unable to create a valid path for the Bitwarden state file. Please ensure the Name of your vault does not contain illegal characters for a file path.") }
+
             # Convert SecureString to plain text securely
             $Private:ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
             try {
@@ -562,15 +584,12 @@ function Unlock-SecretVault {
                 $private:ptr = [System.IntPtr]::Zero
             }
 
-            # Define a path to store the Bitwarden SDK state file
-            $stateFilePath = Join-Path $PSScriptRoot "bitwarden-state.json"
-
             # Initialize SDK client
-            $bitwardenSettings = [Bitwarden.Sdk.BitwardenSettings]::new()
-            $bitwardenSettings.ApiUrl = $vaultInfo.VaultParameters.ApiUrl
-            $bitwardenSettings.IdentityUrl = $vaultInfo.VaultParameters.IdentityUrl
-            $script:BitwardenSecretsClient = [Bitwarden.Sdk.BitwardenClient]::new($bitwardenSettings)
-            $script:BitwardenSecretsClient.Auth.LoginAccessToken($Private:plainToken, $stateFilePath);
+            $Private:BitwardenSettings = [Bitwarden.Sdk.BitwardenSettings]::new()
+            $Private:BitwardenSettings.ApiUrl = $vaultInfo.VaultParameters.ApiUrl
+            $Private:BitwardenSettings.IdentityUrl = $vaultInfo.VaultParameters.IdentityUrl
+            $script:BitwardenSecretsClient = [Bitwarden.Sdk.BitwardenClient]::new($Private:BitwardenSettings)
+            $script:BitwardenSecretsClient.Auth.LoginAccessToken($Private:plainToken, $Script:StateFilePath);
 
             # Test connection
             try{
@@ -578,6 +597,10 @@ function Unlock-SecretVault {
             } catch {
                 throw "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
                 return $false
+            }
+
+            Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+                Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath
             }
 
             # Connection successful
@@ -593,6 +616,7 @@ function Unlock-SecretVault {
             # Clean up sensitive data
             $Private:plainToken = $null
             $Private:ptr = $null
+            $Private:BitwardenStateDirectory = $null
             [System.GC]::Collect()
         }
     } catch [System.UnauthorizedAccessException] {
