@@ -39,7 +39,8 @@ function Get-Secret {
         $script:LastActivity = Get-Date
 
         # Validate OrganizationId
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
         }
 
@@ -94,6 +95,7 @@ function Get-Secret {
         $Private:allSecrets = $null
         $Private:secretMatch = $null
         $Private:secret = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -132,12 +134,14 @@ function Set-Secret {
 
 
         # Validate OrganizationId
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
         }
 
         # Validate ProjectId
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
         }
         
@@ -226,6 +230,7 @@ function Set-Secret {
         $Private:existingSecret = $null
         $Private:ptr = $null
         $Private:allSecrets = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -265,7 +270,8 @@ function Remove-Secret {
 
         # To ensure we're going to delete the correct secret, we only search by the secret's Id, not it's Key
         # Validate the ID is a GUID
-        if (-not [System.Guid]::TryParse($Name, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($Name, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("The provided 'Name' is not a GUID. You must provide the ID of the secret you wish to delete in the 'Name' parameter.")
         }
         
@@ -298,7 +304,8 @@ function Remove-Secret {
         $PSCmdlet.WriteError($errorRecord)
     } finally {
         # Clean up sensitive data
-        $Private:existingSecret
+        $Private:existingSecret = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -336,7 +343,8 @@ function Get-SecretInfo {
         $script:LastActivity = Get-Date
 
         # Validate OrganizationId
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
         }
         
@@ -397,6 +405,7 @@ function Get-SecretInfo {
         $Private:secret = $null
         $Private:allSecrets = $null
         $Private:metadata = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -436,14 +445,16 @@ function Test-SecretVault {
         if (-not $vaultInfo.VaultParameters.OrganizationId) {
             throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required 'OrganizationId' parameter.")
         }
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
         }
         # Validate ProjectId
         if (-not $vaultInfo.VaultParameters.ProjectId) {
             throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter.")
         }
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
         }
         # Validate ApiUrl
@@ -480,6 +491,9 @@ function Test-SecretVault {
             $Name
         )
         $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        $Private:GuidTemplate = $null
+        [System.GC]::Collect()
     }
 }
 
@@ -510,9 +524,9 @@ function Unlock-SecretVault {
     )
     
     try {
-        if(-not $Password){throw "No password provided."}
+        if(-not $Password){throw [System.ArgumentException]::new("No 'Password' parameter provided.")}
 
-        Write-Verbose "Unlocking Bitwarden Secrets Manager vault: $VaultName"
+        Write-Verbose "Unlocking Bitwarden Secrets Manager vault: '$VaultName'"
         
         # Get vault registration info
         $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
@@ -525,14 +539,16 @@ function Unlock-SecretVault {
         if (-not $vaultInfo.VaultParameters.OrganizationId) {
             throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required 'OrganizationId' parameter.")
         }
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
         }
         # Validate ProjectId
         if (-not $vaultInfo.VaultParameters.ProjectId) {
             throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter.")
         }
-        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$null)) {
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
         }
         # Validate ApiUrl
@@ -635,5 +651,8 @@ function Unlock-SecretVault {
             $VaultName
         )
         $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        $Private:GuidTemplate
+        [System.GC]::Collect()
     }
 }
