@@ -3,7 +3,7 @@
     RootModule = 'SecretManagement.BitWarden.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.2.0'
+    ModuleVersion = '0.2.1'
     
     # ID used to uniquely identify this module
     GUID = '7f2e319c-6ebd-41da-bb89-37ba31728f28'
