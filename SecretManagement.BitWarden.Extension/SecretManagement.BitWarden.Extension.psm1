@@ -33,7 +33,7 @@ function Get-Secret {
         }
 
         # Find matching secrets by either Key or Id
-        $Private:secretMatch = $Private:allSecrets.Data | ?{($_.Id.Guid -eq $Name) -or ($_.Key -eq $Name)}
+        $Private:secretMatch = $Private:allSecrets.Data | Where-Object {($_.Id.Guid -eq $Name) -or ($_.Key -eq $Name)}
 
         # Check if there was a matching secret found
         if (-not $Private:secretMatch) {
@@ -184,7 +184,7 @@ function Set-Secret {
 }
 
 function Remove-Secret {
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding()]
     param (
         [string] $Name,
         [string] $VaultName,
@@ -280,7 +280,6 @@ function Get-SecretInfo {
             Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
         }
         
-        $Private:return = @()
         foreach ($Private:secretMatch in $private:allSecrets.Data) {
             if (($private:pattern.IsMatch($Private:secretMatch.Key)) -or ($private:pattern.IsMatch($Private:secretMatch.Id.Guid))) {
                 $Private:secret = $script:BitwardenSecretsClient.Secrets.Get($Private:secretMatch.Id.Guid)
