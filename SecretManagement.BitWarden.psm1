@@ -163,10 +163,10 @@ function Initialize-BitwardenStateDirectory {
             }
         } else {
             # Linux/macOS: Use chmod for POSIX permissions (owner read/write/execute only)
-            & chmod 700 $stateDir
+            & chmod 700 $StateDirectoryPath
             
             # Verify permissions were set correctly
-            $permissions = & stat -c "%a" $stateDir 2>/dev/null
+            $permissions = & stat -c "%a" $StateDirectoryPath 2>/dev/null
             if ($permissions -ne "700") {
                 throw "Failed to set secure permissions on Bitwarden state directory."
             }
