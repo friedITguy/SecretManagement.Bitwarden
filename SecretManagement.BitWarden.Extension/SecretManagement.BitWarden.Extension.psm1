@@ -36,8 +36,8 @@ function Get-Secret {
             } catch {
                 Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
             } finally {
-            $script:BitwardenSecretsClient = $null
-            $script:StateFilePath = $null
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
             }
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
@@ -137,8 +137,8 @@ function Set-Secret {
             } catch {
                 Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
             } finally {
-            $script:BitwardenSecretsClient = $null
-            $script:StateFilePath = $null
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
             }
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
@@ -279,8 +279,8 @@ function Remove-Secret {
             } catch {
                 Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
             } finally {
-            $script:BitwardenSecretsClient = $null
-            $script:StateFilePath = $null
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
             }
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
@@ -361,8 +361,8 @@ function Get-SecretInfo {
             } catch {
                 Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
             } finally {
-            $script:BitwardenSecretsClient = $null
-            $script:StateFilePath = $null
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
             }
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
@@ -466,8 +466,8 @@ function Test-SecretVault {
             } catch {
                 Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
             } finally {
-            $script:BitwardenSecretsClient = $null
-            $script:StateFilePath = $null
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
             }
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
         }
