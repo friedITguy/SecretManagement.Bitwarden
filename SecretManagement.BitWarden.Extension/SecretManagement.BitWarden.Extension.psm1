@@ -623,7 +623,8 @@ function Unlock-SecretVault {
             $null = Initialize-BitwardenStateDirectory -StateDirectoryPath $Private:BitwardenStateDirectory -ErrorAction Stop
 
             # Define a path to store the Bitwarden SDK state file for this session
-            $Script:StateFilePath = Join-Path $Private:BitwardenStateDirectory "state-$($VaultName).json" -ErrorAction Stop
+            $Private:SafeVaultName = $VaultName -replace '[^\w\-_]', '_'
+            $Script:StateFilePath = Join-Path $Private:BitwardenStateDirectory "state-$($Private:SafeVaultName).json" -ErrorAction Stop
             if (-not (Test-Path $Script:StateFilePath -IsValid)) { throw [System.ArgumentException]::new("Unable to create a valid path for the Bitwarden state file. Please ensure the Name of your vault does not contain illegal characters for a file path.") }
 
             # Convert SecureString to plain text securely
@@ -666,6 +667,7 @@ function Unlock-SecretVault {
             $Private:plainToken = $null
             $Private:ptr = $null
             $Private:BitwardenStateDirectory = $null
+            $Private:SafeVaultName = $null
             [System.GC]::Collect()
         }
     } catch [System.UnauthorizedAccessException] {
