@@ -202,7 +202,7 @@ function Set-Secret {
             # Update existing secret
             $null = $Script:BitwardenSecretsClient.Secrets.Update(
                 $vaultInfo.VaultParameters.OrganizationId,
-                $Private:existingSecret[0].Id.Guid,
+                $Private:existingSecret.Id.Guid,
                 $Name,
                 $Private:secretValue,
                 $Private:existingSecret.Note ?? "",
@@ -385,7 +385,7 @@ function Get-SecretInfo {
         $private:allSecrets = $Script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
         
         if (-not $Private:allSecrets.Data) {
-            Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
+            Write-Error "Unable to access secrets in your Secrets Manager vault" -ErrorAction Stop
         }
         
         foreach ($Private:secretMatch in $private:allSecrets.Data) {
