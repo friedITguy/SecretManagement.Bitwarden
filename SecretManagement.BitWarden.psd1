@@ -3,7 +3,7 @@
     RootModule = 'SecretManagement.BitWarden.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.2.0'
+    ModuleVersion = '0.2.1'
     
     # ID used to uniquely identify this module
     GUID = '7f2e319c-6ebd-41da-bb89-37ba31728f28'
@@ -21,8 +21,8 @@
     Description = 'Microsoft.PowerShell.SecretManagement extension for Bitwarden Secrets Manager.'
     
     # Minimum version of the PowerShell engine required by this module
-    PowerShellVersion  = '5.1'
-    CompatiblePSEditions = @('Desktop','Core')
+    PowerShellVersion  = '7.0'
+    CompatiblePSEditions = @('Core')
     
     # Modules that must be imported into the global environment prior to importing this module
     RequiredModules    = @('Microsoft.PowerShell.SecretManagement')
@@ -45,7 +45,7 @@
     NestedModules = @('./SecretManagement.Bitwarden.Extension')
     
     # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-    FunctionsToExport = @('Import-BitwardenSdk')
+    FunctionsToExport = @('Import-BitwardenSdk', 'Initialize-BitwardenStateDirectory', 'Get-BitwardenStateDirectoryPath', 'Remove-BitwardenStateFile')
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
     CmdletsToExport = @()

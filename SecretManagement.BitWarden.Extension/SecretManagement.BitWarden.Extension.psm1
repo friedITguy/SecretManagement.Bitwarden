@@ -3,6 +3,9 @@ using namespace Microsoft.PowerShell.SecretManagement
 # Module-scoped variables
 $script:BitwardenSecretsClient = $null
 $script:BitwardenSdkLoaded = $false
+$script:StateFilePath = $null
+$script:SessionTimeout = New-TimeSpan -Minutes 30
+$script:LastActivity = Get-Date
 
 function Get-Secret {
     [CmdletBinding()]
@@ -24,6 +27,30 @@ function Get-Secret {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
 
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            try {
+                if ($script:StateFilePath -and (Test-Path $script:StateFilePath)) {
+                    Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+                }
+            } catch {
+                Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
+            } finally {
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
+            }
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
+        # Validate OrganizationId
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+
         # Get a list of all secrets in the vault
         $Private:allSecrets = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
 
@@ -33,7 +60,7 @@ function Get-Secret {
         }
 
         # Find matching secrets by either Key or Id
-        $Private:secretMatch = $Private:allSecrets.Data | ?{($_.Id.Guid -eq $Name) -or ($_.Key -eq $Name)}
+        $Private:secretMatch = $Private:allSecrets.Data | Where-Object {($_.Id.Guid -eq $Name) -or ($_.Key -eq $Name)}
 
         # Check if there was a matching secret found
         if (-not $Private:secretMatch) {
@@ -75,6 +102,7 @@ function Get-Secret {
         $Private:allSecrets = $null
         $Private:secretMatch = $null
         $Private:secret = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -99,11 +127,48 @@ function Set-Secret {
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            try {
+                if ($script:StateFilePath -and (Test-Path $script:StateFilePath)) {
+                    Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+                }
+            } catch {
+                Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
+            } finally {
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
+            }
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
+
+        # Validate OrganizationId
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+
+        # Validate ProjectId
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
+        }
         
         # Convert secret to string value
         $private:secretValue = switch ($Secret.GetType().Name) {
             'SecureString' {
-                [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret))
+                $Private:ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+                try {
+                    [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($Private:ptr)
+                } finally {
+                    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Private:ptr)
+                    $private:ptr = [System.IntPtr]::Zero
+                }
             }
             'PSCredential' {
                 # For credentials, store as JSON
@@ -123,7 +188,7 @@ function Set-Secret {
         # Get all secrets, so we can find the one with a matching name
         $Private:allSecrets = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
         if (-not $Private:allSecrets.Data) {
-            Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
+            Write-Error "Unable to access secrets in your Secrets Manager vault" -ErrorAction Stop
         }
 
         # Find secret with a matching Name or ID
@@ -137,7 +202,7 @@ function Set-Secret {
             # Update existing secret
             $null = $Script:BitwardenSecretsClient.Secrets.Update(
                 $vaultInfo.VaultParameters.OrganizationId,
-                $Private:existingSecret[0].Id.Guid,
+                $Private:existingSecret.Id.Guid,
                 $Name,
                 $Private:secretValue,
                 $Private:existingSecret.Note ?? "",
@@ -177,14 +242,15 @@ function Set-Secret {
         $Private:secretValue = $null
         $Private:existingSecretMatch = $null
         $Private:existingSecret = $null
-        $Private:secretData = $null
+        $Private:ptr = $null
         $Private:allSecrets = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
 
 function Remove-Secret {
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding()]
     param (
         [string] $Name,
         [string] $VaultName,
@@ -204,12 +270,29 @@ function Remove-Secret {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
 
-         # Define GUID verification regex
-        [regex]$guidRegex = '(?im)^[{(]?[0-9A-F]{8}[-]?(?:[0-9A-F]{4}[-]?){3}[0-9A-F]{12}[)}]?$'
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            try {
+                if ($script:StateFilePath -and (Test-Path $script:StateFilePath)) {
+                    Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+                }
+            } catch {
+                Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
+            } finally {
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
+            }
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
 
         # To ensure we're going to delete the correct secret, we only search by the secret's Id, not it's Key
-        # Check Name parameter against RegEx to ensure it's a valid GUID
-        if ($Name -notmatch $guidRegex){
+        # Validate the ID is a GUID
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($Name, [ref]$Private:GuidTemplate)) {
             throw [System.ArgumentException]::new("The provided 'Name' is not a GUID. You must provide the ID of the secret you wish to delete in the 'Name' parameter.")
         }
         
@@ -242,7 +325,8 @@ function Remove-Secret {
         $PSCmdlet.WriteError($errorRecord)
     } finally {
         # Clean up sensitive data
-        $Private:existingSecret
+        $Private:existingSecret = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -267,6 +351,30 @@ function Get-SecretInfo {
         if (-not $script:BitwardenSecretsClient) {
             throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
         }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            try {
+                if ($script:StateFilePath -and (Test-Path $script:StateFilePath)) {
+                    Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+                }
+            } catch {
+                Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
+            } finally {
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
+            }
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
+        # Validate OrganizationId
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
         
         if ([string]::IsNullOrEmpty($Filter)) {
             $Filter = "*"
@@ -277,10 +385,9 @@ function Get-SecretInfo {
         $private:allSecrets = $Script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
         
         if (-not $Private:allSecrets.Data) {
-            Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
+            Write-Error "Unable to access secrets in your Secrets Manager vault" -ErrorAction Stop
         }
         
-        $Private:return = @()
         foreach ($Private:secretMatch in $private:allSecrets.Data) {
             if (($private:pattern.IsMatch($Private:secretMatch.Key)) -or ($private:pattern.IsMatch($Private:secretMatch.Id.Guid))) {
                 $Private:secret = $script:BitwardenSecretsClient.Secrets.Get($Private:secretMatch.Id.Guid)
@@ -326,6 +433,7 @@ function Get-SecretInfo {
         $Private:secret = $null
         $Private:allSecrets = $null
         $Private:metadata = $null
+        $Private:GuidTemplate = $null
         [System.GC]::Collect()
     }
 }
@@ -344,18 +452,59 @@ function Test-SecretVault {
             throw [System.ArgumentException]::new("Vault '$VaultName' is not registered")
         }
 
+        # Verify that the BitwardenSecretsClient session is open
+        if (-not $script:BitwardenSecretsClient) {
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has not been unlocked. Please run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it.")
+        }
+
+        # Verify that the session is not expired
+        if ((Get-Date) - $script:LastActivity -gt $script:SessionTimeout) {
+            try {
+                if ($script:StateFilePath -and (Test-Path $script:StateFilePath)) {
+                    Remove-BitwardenStateFile -StateFilePath $script:StateFilePath
+                }
+            } catch {
+                Write-Warning "Failed to clean up Bitwarden state file: $($_.Exception.Message)"
+            } finally {
+                $script:BitwardenSecretsClient = $null
+                $script:StateFilePath = $null
+            }
+            throw [System.UnauthorizedAccessException]::new("Vault '$VaultName' has been locked due to exceeding the idle timeout threshold. You will need to run ""Unlock-SecretVault -Name '$VaultName'"" to unlock the vault before using it again.")
+        }
+
+        # Set the LastActivity variable to now
+        $script:LastActivity = Get-Date
+
         # Validate required parameters
+        # Validate OrganizationId
         if (-not $vaultInfo.VaultParameters.OrganizationId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required OrganizationId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required 'OrganizationId' parameter.")
         }
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+        # Validate ProjectId
         if (-not $vaultInfo.VaultParameters.ProjectId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter.")
         }
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
+        }
+        # Validate ApiUrl
         if (-not $vaultInfo.VaultParameters.ApiUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter.")
         }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.ApiUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'ApiUrl' parameter.")
+        }
+        # Validate IdentityUrl
         if (-not $vaultInfo.VaultParameters.IdentityUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter.")
+        }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.IdentityUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'IdentityUrl' parameter.")
         }
 
         # Simple connectivity test
@@ -377,6 +526,9 @@ function Test-SecretVault {
             $Name
         )
         $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        $Private:GuidTemplate = $null
+        [System.GC]::Collect()
     }
 }
 
@@ -407,9 +559,9 @@ function Unlock-SecretVault {
     )
     
     try {
-        if(-not $Password){throw "No password provided."}
+        if(-not $Password){throw [System.ArgumentException]::new("No 'Password' parameter provided.")}
 
-        Write-Verbose "Unlocking Bitwarden Secrets Manager vault: $VaultName"
+        Write-Verbose "Unlocking Bitwarden Secrets Manager vault: '$VaultName'"
         
         # Get vault registration info
         $vaultInfo = Get-SecretVault -Name $VaultName -ErrorAction Stop
@@ -418,17 +570,35 @@ function Unlock-SecretVault {
         }
         
         # Validate required parameters
+        # Validate OrganizationId
         if (-not $vaultInfo.VaultParameters.OrganizationId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required OrganizationId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required 'OrganizationId' parameter.")
         }
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.OrganizationId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'OrganizationId' parameter.")
+        }
+        # Validate ProjectId
         if (-not $vaultInfo.VaultParameters.ProjectId) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ProjectId parameter.")
         }
+        $Private:GuidTemplate = [System.Guid]::Empty
+        if (-not [System.Guid]::TryParse($vaultInfo.VaultParameters.ProjectId, [ref]$Private:GuidTemplate)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid GUID format for the required 'ProjectId' parameter.")
+        }
+        # Validate ApiUrl
         if (-not $vaultInfo.VaultParameters.ApiUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required ApiUrl parameter.")
         }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.ApiUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'ApiUrl' parameter.")
+        }
+        # Validate IdentityUrl
         if (-not $vaultInfo.VaultParameters.IdentityUrl) {
-            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter")
+            throw [System.InvalidOperationException]::new("Vault '$VaultName' is missing the required IdentityUrl parameter.")
+        }
+        if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.IdentityUrl, [System.UriKind]::Absolute)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'IdentityUrl' parameter.")
         }
 
         # Ensure the Bitwarden Secrets Manager SDK is loaded
@@ -439,43 +609,64 @@ function Unlock-SecretVault {
                 $script:BitwardenSdkLoaded = $true
             }catch{
                 $script:BitwardenSdkLoaded = $false
-                throw throw [System.InvalidOperationException]::new("Unable to load the Bitwarden SDK")
+                throw [System.InvalidOperationException]::new("Unable to load the Bitwarden SDK.")
             }
         }
         
         # Create authenticated session
         try {
-            # Convert SecureString to plain text securely
-            $Private:plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
+            # Get the directory path where Bitwarden SDK state files are stored
+            $Private:BitwardenStateDirectory = Get-BitwardenStateDirectoryPath -ErrorAction Stop
+            if (-not $Private:BitwardenStateDirectory) { throw [System.ArgumentException]::new("Unable to obtain a directory path to store the Bitwarden state file in.") }
+            
+            # Initialize the Bitwarden SDK state file directory
+            $null = Initialize-BitwardenStateDirectory -StateDirectoryPath $Private:BitwardenStateDirectory -ErrorAction Stop
 
-            # Define a path to store the Bitwarden SDK state file
-            $stateFilePath = Join-Path $PSScriptRoot "bitwarden-state.json"
+            # Define a path to store the Bitwarden SDK state file for this session
+            $Private:SafeVaultName = $VaultName -replace '[^\w\-_]', '_'
+            $Script:StateFilePath = Join-Path $Private:BitwardenStateDirectory "state-$($Private:SafeVaultName).json" -ErrorAction Stop
+            if (-not (Test-Path $Script:StateFilePath -IsValid)) { throw [System.ArgumentException]::new("Unable to create a valid path for the Bitwarden state file. Please ensure the Name of your vault does not contain illegal characters for a file path.") }
+
+            # Convert SecureString to plain text securely
+            $Private:ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
+            try {
+                $Private:plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($Private:ptr)
+            } finally {
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Private:ptr)
+                $private:ptr = [System.IntPtr]::Zero
+            }
 
             # Initialize SDK client
-            $bitwardenSettings = [Bitwarden.Sdk.BitwardenSettings]::new()
-            $bitwardenSettings.ApiUrl = $vaultInfo.VaultParameters.ApiUrl
-            $bitwardenSettings.IdentityUrl = $vaultInfo.VaultParameters.IdentityUrl
-            $script:BitwardenSecretsClient = [Bitwarden.Sdk.BitwardenClient]::new($bitwardenSettings)
-            $script:BitwardenSecretsClient.Auth.LoginAccessToken($Private:plainToken, $stateFilePath);
+            $Private:BitwardenSettings = [Bitwarden.Sdk.BitwardenSettings]::new()
+            $Private:BitwardenSettings.ApiUrl = $vaultInfo.VaultParameters.ApiUrl
+            $Private:BitwardenSettings.IdentityUrl = $vaultInfo.VaultParameters.IdentityUrl
+            $script:BitwardenSecretsClient = [Bitwarden.Sdk.BitwardenClient]::new($Private:BitwardenSettings)
+            $script:BitwardenSecretsClient.Auth.LoginAccessToken($Private:plainToken, $Script:StateFilePath);
 
             # Test connection
             try{
                 $null = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
             } catch {
-                Write-Warning "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
+                throw "Failed to create a Bitwarden Secrets Manager session."
                 return $false
             }
 
+            Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath }
+            Register-EngineEvent -InputObject ([System.AppDomain]::CurrentDomain) -EventName ProcessExit -Action { Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath }
+
             # Connection successful
-            Write-Verbose "Successfully connected to Bitwarden Secrets Manager"
+            # Set the LastActivity variable to now
+            $script:LastActivity = Get-Date
+            Write-Verbose "Successfully connected to Bitwarden Secrets Manager."
             
         } catch {
-            throw [System.UnauthorizedAccessException]::new(
-                "Failed to authenticate with Bitwarden Secrets Manager: $($_.Exception.Message)"
-            )
+            throw [System.UnauthorizedAccessException]::new("Failed to authenticate with Bitwarden Secrets Manager.")
         } finally {
             # Clean up sensitive data
-            $plainToken = $null 
+            $Private:plainToken = $null
+            $Private:ptr = $null
+            $Private:BitwardenStateDirectory = $null
+            $Private:SafeVaultName = $null
             [System.GC]::Collect()
         }
     } catch [System.UnauthorizedAccessException] {
@@ -494,5 +685,8 @@ function Unlock-SecretVault {
             $VaultName
         )
         $PSCmdlet.WriteError($errorRecord)
+    } finally {
+        $Private:GuidTemplate
+        [System.GC]::Collect()
     }
 }
