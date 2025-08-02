@@ -189,22 +189,22 @@ function Remove-BitwardenStateFile {
     )
 
     try{
-        if(-not (Test-Path $stateFilePath -IsValid)){
+        if(-not (Test-Path $StateFilePath -IsValid)){
             throw [System.InvalidOperationException]::new("The provided 'StateFilePath' string does not contain valid syntax for a Path.")
         }
 
-        if (-not (Test-Path $stateFilePath)) {
+        if (-not (Test-Path $StateFilePath)) {
             return $false
         }
 
         $Private:StateDirectoryPath = Get-BitwardenStateDirectoryPath -ErrorAction Stop
-        $Private:StateFileParent = Split-Path $stateFilePath -Parent
+        $Private:StateFileParent = Split-Path $StateFilePath -Parent
         
         if (-not $Private:StateDirectoryPath -eq $Private:StateFileParent){
             throw [System.InvalidOperationException]::new("The provided 'StateFilePath' is not located within the Bitwarden state file directory.")
         }
 
-        Remove-Item $stateFilePath -Force -ErrorAction Stop
+        Remove-Item $StateFilePath -Force -ErrorAction Stop
     } finally {
         $Private:StateDirectoryPath = $null
         $Private:StateFileParent = $null
