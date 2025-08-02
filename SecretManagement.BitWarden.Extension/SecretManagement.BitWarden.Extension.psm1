@@ -188,7 +188,7 @@ function Set-Secret {
         # Get all secrets, so we can find the one with a matching name
         $Private:allSecrets = $script:BitwardenSecretsClient.Secrets.List($vaultInfo.VaultParameters.OrganizationId)
         if (-not $Private:allSecrets.Data) {
-            Write-Error "Unable to access screts in your Secrets Manager vault" -ErrorAction Stop
+            Write-Error "Unable to access secrets in your Secrets Manager vault" -ErrorAction Stop
         }
 
         # Find secret with a matching Name or ID
