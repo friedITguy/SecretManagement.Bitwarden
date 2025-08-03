@@ -664,8 +664,12 @@ function Unlock-SecretVault {
                 return $false
             }
 
-            Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath }
-            Register-EngineEvent -InputObject ([System.AppDomain]::CurrentDomain) -EventName ProcessExit -Action { Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath }
+            try{
+                Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath }
+                Register-EngineEvent -InputObject ([System.AppDomain]::CurrentDomain) -EventName ProcessExit -Action { Remove-BitwardenStateFile -StateFilePath $Script:StateFilePath }
+            } catch {
+                # PowerShell engine event registration doesn't work on all platforms. Proceed silently if it
+            }
 
             # Connection successful
             # Set the LastActivity variable to now
