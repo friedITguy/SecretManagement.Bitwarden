@@ -38,8 +38,6 @@ function Import-BitwardenSdk {
     # Determine if the Runtime is supported
     $supportedRuntimes = ($nativeLibraries | Get-Member -MemberType NoteProperty).Name
     $runtime = "$platform-$architecture"
-    
-    # Verify
     if($supportedRuntimes -notcontains $runtime){throw "The operating system and processor architecture combination you're running is not a valid runtime for the .NET version of the Bitwarden SDK. Supported runtimes are $($supportedRuntimes -join ', ')."}
     
     # If we got here then the system is running on a supported runtime for the Bitwarden SDK
@@ -58,8 +56,40 @@ function Import-BitwardenSdk {
     if(-not $sdkFile){ throw "The required Bitwarden.Sdk.dll file could not be found within the '$($libPath)' directory." }
     if(-not $nativeLibFile){ throw "The required '$($nativeLibraries.$runtime)' file could not be found within the '$($libPath)' directory." }
     
+    # Check for updates to the Bitwarden SDK
+    Get-BitwardenSdkUpdate -sdkPath $sdkPath
+
     # Load the Bitwarden.Secrets.Sdk to the PowerShell Session
     Add-Type -Path $sdkPath -ErrorAction Stop
+}
+
+function Get-BitwardenSdkUpdate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [String] $sdkPath
+    )
+
+    try {
+        # Make sure the SDK file exists
+        $sdkFile = Test-Path -Path $sdkPath -ErrorAction SilentlyContinue
+        if(-not $sdkFile){ throw "The required Bitwarden.Sdk.dll file could not be found within the '$($libPath)' directory." }
+
+        $latestPackage = Find-Package -Name Bitwarden.Secrets.Sdk
+        $currentPackage = Get-Item -Path $sdkPath
+        if (-not $latestPackage) {throw "No latest package"}
+        if (-not $latestPackage.Version -or ($latestPackage.Version -notmatch '^\d+\.\d+\.\d+$')) {throw "No latest package version"}
+        if (-not $currentPackage) {throw "No current package"}
+        if (-not $currentPackage.VersionInfo) {throw "No current product version"}
+
+        if ($latestPackage.Version -ne "$($currentPackage.VersionInfo.ProductMajorPart).$($currentPackage.VersionInfo.ProductMinorPart).$($currentPackage.VersionInfo.ProductBuildPart)") {
+            Write-Warning "There is an updated Bitwarden Secrets SDK available. Please see the SecretManagement.Bitwarden repo's README.md for details on how to update the local SDK files."
+            Write-Warning "The currently installed version of 'Bitwarden.Secrets.Sdk' is '$($currentPackage.VersionInfo.ProductMajorPart).$($currentPackage.VersionInfo.ProductMinorPart).$($currentPackage.VersionInfo.ProductBuildPart)'."
+            Write-Warning "The most recent version of 'Bitwarden.Secrets.Sdk' is $($latestPackage.Version)."
+        }
+    } catch {
+        Write-Warning "Unable to check nuget for updates to the Bitwarden SDK."
+    }
 }
 
 function Get-BitwardenStateDirectoryPath {
