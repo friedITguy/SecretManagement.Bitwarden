@@ -611,7 +611,7 @@ function Unlock-SecretVault {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid 'SessionTimeout' parameter value. The timeout must be an integer between 1 and 480.")
         } else {
             # Set the SessionTimeout
-            $script:SessionTimeout = [int]$vaultInfo.VaultParameters.SessionTimeout
+            $script:SessionTimeout = New-TimeSpan -Minutes $([int]$vaultInfo.VaultParameters.SessionTimeout)
         }
 
         # Ensure the Bitwarden Secrets Manager SDK is loaded
