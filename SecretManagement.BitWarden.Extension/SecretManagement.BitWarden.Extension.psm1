@@ -4,7 +4,7 @@ using namespace Microsoft.PowerShell.SecretManagement
 $script:BitwardenSecretsClient = $null
 $script:BitwardenSdkLoaded = $false
 $script:StateFilePath = $null
-$script:SessionTimeout = New-TimeSpan -Minutes 30
+$script:SessionTimeout = New-TimeSpan -Minutes 5
 $script:LastActivity = Get-Date
 
 function Get-Secret {
@@ -599,6 +599,19 @@ function Unlock-SecretVault {
         }
         if (-not [System.Uri]::IsWellFormedUriString($vaultInfo.VaultParameters.IdentityUrl, [System.UriKind]::Absolute)) {
             throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid URL format for the required 'IdentityUrl' parameter.")
+        }
+
+        # Validate Optional Parameters
+        # Validate SessionTimeout
+        if ((-not $vaultInfo.VaultParameters.SessionTimeout)){
+            Write-Warning "Vault '$VaultName' does not contain the optional 'SessionTimeout' parameter. The session will default to expiring after $($script:SessionTimeout) minutes of inactivity."
+        } elseif (-not [int]::TryParse($vaultInfo.VaultParameters.SessionTimeout, [ref]15)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid 'SessionTimeout' parameter value. The timeout must be a valid integer.")
+        } elseif (([int]$vaultInfo.VaultParameters.SessionTimeout -lt 1) -or ([int]$vaultInfo.VaultParameters.SessionTimeout -gt 480)) {
+            throw [System.ArgumentException]::new("Vault '$VaultName' has an invalid 'SessionTimeout' parameter value. The timeout must be an integer between 1 and 480.")
+        } else {
+            # Set the SessionTimeout
+            $script:SessionTimeout = [int]$vaultInfo.VaultParameters.SessionTimeout
         }
 
         # Ensure the Bitwarden Secrets Manager SDK is loaded
